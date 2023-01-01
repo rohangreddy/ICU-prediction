@@ -1,6 +1,6 @@
 import pandas as pd
-import os
 from multiprocessing import Pool
+import os
 from collections import deque
 
 def label_aki(path):
@@ -76,24 +76,52 @@ def label_aki(path):
             return (id, hours)
     return (id, -1)
 
-def generate_aki_labels(path: str):
+def create_observation_window(path):
+    pt = pd.read_csv(path)
+    ans = [[], [], []]
+    id, onset = label_aki(path)
+    start_hour = pt.iloc[pt.index.min(), -1] 
+    end_idx = min(pt.index.min() + 24, pt.index.max())
+    end_hour = pt.iloc[min(end_idx, pt.index.max()), -1]
+    window = 0
+    while pt.index.max() >= end_idx and window < 3 and not (start_hour <= onset <= end_hour):
+        label = 0
+        if end_hour < onset <= end_hour+24:
+            label = 1
+        ans[window] = [pt.iloc[:end_idx,:-1].mean(), label, id]
+        end_idx = min(end_idx+24, pt.index.max())
+        end_hour = pt.iloc[end_idx, -1]
+        window += 1
+    return ans
+    
+def preprocess_observation_windows(path):
     files = os.listdir(path)
     file_list = [path+filename for filename in files if filename.split('.')[1]=='csv']
     with Pool(processes=8) as pool:
-        labels_list = pool.map(label_aki, file_list)
-        aki_labels = {'id': [x[0] for x in labels_list],
-                      'aki': [0 if x[1] == -1 else 1 for x in labels_list]}
-        return pd.DataFrame(aki_labels).sort_values('id').reset_index(drop=True)
+        windows = pool.map(create_observation_window, file_list)
+    
+    pt_windows = [[patient[i][0] for patient in windows if patient[i]] for i in range(3)]
+    pt_labels = [[patient[i][1] for patient in windows if patient[i]] for i in range(3)]
+    pt_ids = [[patient[i][0] for patient in windows if patient[i]] for i in range(3)]
+    
+    window_24 = pd.concat(pt_windows[0], axis=1).T if pt_windows[0] else []
+    labels_24 = {'id': pt_ids[0], 'label': pt_labels[0]} if pt_labels and pt_ids else {}
+    labels_24 = pd.DataFrame(labels_24)
+
+    window_48 = pd.concat(pt_windows[1], axis=1).T if pt_windows[1] else []
+    labels_48 = {'id': pt_ids[1], 'label': pt_labels[1]} if pt_labels and pt_ids else {}
+    labels_48 = pd.DataFrame(labels_48)
+
+    window_72 = pd.concat(pt_windows[2], axis=1).T if pt_windows[2] else []
+    labels_72 = {'id': pt_ids[2], 'label': pt_labels[2]} if pt_labels and pt_ids else {}
+    labels_72 = pd.DataFrame(labels_72)
+
+    print(labels_72.shape)
+    print(labels_48.shape)
+    print(labels_24.shape)
 
 if __name__ == '__main__':
-    aki_train_path = './data/dataset_AKI_prediction/dataset_train/'
-    aki_test_path = './data/dataset_AKI_prediction/dataset_test/'
-    sepsis_path = './data/dataset_sepsis_prediction/dataset_train/'
-    
-    aki_train_labels = generate_aki_labels(aki_train_path)
-    aki_test_labels = generate_aki_labels(aki_test_path)
-    
-    aki_train_labels.to_csv('data/aki_train_labels.csv', index=False)
-    aki_test_labels.to_csv('data/aki_test_labels.csv', index=False)
+    path = 'data/dataset_AKI_prediction/dataset_train/'
+    preprocess_observation_windows(path)
 
     
